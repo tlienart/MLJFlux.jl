@@ -1,6 +1,6 @@
 module MLJFlux
 
-export NeuralNetworkRegressor, UnivariateNeuralNetworkRegressor
+export NeuralNetworkRegressor
 export NeuralNetworkClassifier, ImageClassifier
 
 # import LossFunctions
@@ -12,6 +12,7 @@ using Base.Iterators: partition
 using ProgressMeter
 using CategoricalArrays
 using Tables
+using ScientificTypes
 include("entity_embedding.jl")
 
 # CONSTANTS
@@ -151,7 +152,7 @@ mutable struct Linear <: Builder
     σ
 end
 Linear(; σ=Flux.relu) = Linear(σ)
-fit(builder::Linear, n::Integer, m::Integer) = chain(Flux.Dense(n, m, builder.σ))
+fit(builder::Linear, n::Integer, m::Integer) = Flux.Chain(Flux.Dense(n, m, builder.σ))
 
 # baby example 2:
 mutable struct Short <: Builder
@@ -214,16 +215,19 @@ NeuralNetworkRegressor(; builder::B   = Linear()
                                        , embedding_choice
                                        , embeddingdimension)
 
-MLJBase.input_is_multivariate(::Type{<:NeuralNetworkRegressor}) = true
-MLJBase.input_scitype_union(::Type{<:NeuralNetworkRegressor}) = MLJBase.Continuous
-MLJBase.target_scitype_union(::Type{<:NeuralNetworkRegressor}) =
-    Union{MLJBase.Continuous,NTuple{<:MLJBase.Continuous}}
+#MLJBase.input_is_multivariate(::Type{<:NeuralNetworkRegressor}) = true
+#MLJBase.input_scitype_union(::Type{<:NeuralNetworkRegressor}) = MLJBase.Continuous
+#MLJBase.target_scitype_union(::Type{<:NeuralNetworkRegressor}) =
+    #Union{MLJBase.Continuous,NTuple{<:MLJBase.Continuous}}
 
 function has_categorical_data(X)
-    types = MLJBase.scitypes(X)
-    categorical_types = filter(keys(types)|>collect) do k
-        getproperty(types, k) <: MLJBase.Finite
+    types = MLJBase.schema(X)
+    categorical_types = []
+    for i=1:length(types.scitypes)
+        if types.scitypes[i] <: Union{ScientificTypes.Unknown, ScientificTypes.Finite}
+            push!(categorical_types, types.names[i])
         end
+    end
     return categorical_types
 end
 
@@ -335,9 +339,9 @@ function MLJBase.predict(model, fitresult, Xnew_)
             return [(chain(Xnew_[:, 1]), Val(ismulti)) for i in 1:size(Xnew_, 2)]
         end
     else
-        Xnew_ = MLJBase.matrix(Xnew_)'
+        Xnew_ = MLJBase.matrix(Xnew_)
     end
-    return [(chain(values.(Xnew_[i, :])), Val(ismulti)) for i in 1:size(Xnew_, 1)]
+    return [chain(values.(Xnew_[i, :])) for i in 1:size(Xnew_, 1)]
 end
 
 function MLJBase.update(model::NeuralNetworkRegressor, verbosity::Int, old_fitresult, old_cache, X, y)
@@ -450,9 +454,9 @@ NeuralNetworkClassifier(; builder::B   = Linear()
                                        , embedding_choice
                                        , embeddingdimension)
 
-MLJBase.input_is_multivariate(::Type{<:NeuralNetworkClassifier}) = true
-MLJBase.input_scitype_union(::Type{<:NeuralNetworkClassifier}) = MLJBase.Continuous
-MLJBase.target_scitype_union(::Type{<:NeuralNetworkClassifier}) = MLJBase.Multiclass
+#MLJBase.input_is_multivariate(::Type{<:NeuralNetworkClassifier}) = true
+#MLJBase.input_scitype_union(::Type{<:NeuralNetworkClassifier}) = MLJBase.Continuous
+#MLJBase.target_scitype_union(::Type{<:NeuralNetworkClassifier}) = MLJBase.Multiclass
 
 function collate(model::NeuralNetworkClassifier,
                  X, y, batch_size)
@@ -520,7 +524,7 @@ function MLJBase.fit(model::NeuralNetworkClassifier, verbosity::Int,
     else
         # When it has no categorical features
         n = MLJBase.schema(X).names |> length
-        m = length(y[1])
+        m = levels(y) |> length
         chain = fit(model.builder, n, m)
     end
 
@@ -556,10 +560,10 @@ function MLJBase.predict(model::NeuralNetworkClassifier, fitresult, Xnew_)
             return [MLJBase.UnivariateFinite(levels, Flux.softmax(chain(Xnew_[:,i]).data)) for i in 1:size(Xnew_, 2)]
         end
     else
-        Xnew_ = MLJBase.matrix(Xnew_)'
+        Xnew_ = MLJBase.matrix(Xnew_)
     end
 
-    return [MLJBase.UnivariateFinite(levels, Flux.softmax(chain(Xnew_[i, :]).data) |> vec) for i in 1:size(Xnew_, 1)]
+    return [MLJBase.UnivariateFinite(CategoricalArray(levels), Flux.softmax(chain(Xnew_[i, :]).data) |> vec) for i in 1:size(Xnew_, 1)]
 
 end
 
@@ -667,9 +671,9 @@ ImageClassifier(; builder::B   = Linear()
                                        , alpha
                                        , optimiser_changes_trigger_retraining)
 
-MLJBase.input_is_multivariate(::Type{<:ImageClassifier}) = false
-MLJBase.input_scitype_union(::Type{<:ImageClassifier}) = MLJBase.GrayImage
-MLJBase.target_scitype_union(::Type{<:ImageClassifier}) = MLJBase.Multiclass
+#MLJBase.input_is_multivariate(::Type{<:ImageClassifier}) = false
+#MLJBase.input_scitype_union(::Type{<:ImageClassifier}) = MLJBase.GrayImage
+#MLJBase.target_scitype_union(::Type{<:ImageClassifier}) = MLJBase.Multiclass
 
 function make_minibatch(X, Y, idxs)
     X_batch = Array{Float32}(undef, size(X[1])..., 1, length(idxs))

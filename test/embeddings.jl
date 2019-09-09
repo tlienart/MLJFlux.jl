@@ -1,5 +1,6 @@
 using MLJ
 using MLJFlux
+using CSV
 
 ## Test 1: Data with purely categorical features, onehot encoding and batch size =1
 
